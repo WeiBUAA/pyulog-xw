@@ -82,7 +82,7 @@ class ULog(object):
         :param message_name_filter_list: list of strings, to only load messages
                with the given names. If None, load everything.
         """
-
+        
         self._debug = False
 
         self._file_corrupt = False
