@@ -315,7 +315,7 @@ def rate_fft(ulog_file_name, output):
         pitchsp = d.data[data_name] * 57.3 #degree
 
         # get time subsection
-        index = np.where(times>=9.0)
+        index = np.where((times>=9.0)&(times<=100.0))
         time_sub = times[index]
         print(times)
         pitchsp_sub = pitchsp[index]
