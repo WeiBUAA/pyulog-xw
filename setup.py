@@ -61,6 +61,8 @@ setup(
             'ulog_params=pyulog.params:main',
             'ulog2csv=pyulog.ulog2csv:main',
             'ulog2kml=pyulog.ulog2kml:main',
+	        'icuas_2019=pyulog.icuas_2019:main',
+            'ILC=pyulog.ILC:main',
         ],
     },
     packages=find_packages(),
