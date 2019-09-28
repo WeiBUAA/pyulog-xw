@@ -13,10 +13,12 @@ import matplotlib.pyplot as plt
 from   matplotlib import colors as mcolors
 import numpy as np
 import cvxpy as cvx
+from scipy.spatial.transform import Rotation as Rotation
 
 from scipy.interpolate import spline
 from scipy import signal
 from .core import ULog
+from .px4  import PX4ULog
 
 
 #pylint: disable=too-many-locals, invalid-name, consider-using-enumerate
@@ -55,13 +57,16 @@ def main():
         os.mkdir(args.output)
 
     #sweep(args.filename, args.output, 0, 210)
-    #compare_pr()
     #vib_14hz_test(args.filename)
     #forward_test(args.filename)
     #notch_test(args.filename)
     #plot_aero()
     #height_test()
-    acc_filter(args.filename)
+    #acc_filter(args.filename)
+
+    #angular_rate_analyz(args.filename)
+    #sideslip_calculate()
+    euler_rate_compare()
 
     #system identification of ILC
     global sample_time
@@ -104,46 +109,12 @@ def plot_aero():
 
     plt.show()
 
-def read_data(ulog_file_name,massage,channal,time_start,time_end):
-    ulog = ULog(ulog_file_name, massage)
-    d    = ulog.data_list
-    
-    if (channal == 'q_d'): #| (massage == 'sensor_accel')):
-        ind_channel = 1
-    else:
-        ind_channel = 0
-    print(d[0].name)
-
-    times = d[ind_channel].data['timestamp'] / 1000000.0 #second
-    #times = times - times[0]
-    index = np.where((times>=time_start)&(times<=time_end))
-    time_sub = times[index]
-    print(time_sub.shape)
-    q = np.zeros(shape=(len(time_sub),4))
-
-    if ((channal == 'q') or (channal == 'q_d')):
-        for i in range(0,4):
-            data_name = channal + '['+str(i)+']'
-            ori_data = d[ind_channel].data[data_name]
-            #print(ori_data)
-            q[:,i] = ori_data[index]
-        roll  = np.arcsin(2.0 * (q[:,0] * q[:,1] + q[:,2] * q[:,3]))*57.3
-        pitch = np.arctan2(-2.0 * (q[:,1] * q[:,3] - q[:,0] * q[:,2]), 1.0 - 2.0 * (q[:,1] * q[:,1] + q[:,2] * q[:,2]))*57.3
-        yaw   = np.arctan2(-2.0 * (q[:,1] * q[:,2] - q[:,0] * q[:,3]), 1.0 - 2.0 * (q[:,1] * q[:,1] + q[:,3] * q[:,3]))*57.3
-        dat   = np.vstack((time_sub,roll,pitch,yaw))
-        
-    else:
-        data_name = channal
-        pitchsp = d[ind_channel].data[data_name] #degree
-        pitchsp_sub = pitchsp[index]
-        dat = np.vstack((time_sub,pitchsp_sub))
-    return dat
 def fft_a(time,samp_sub):
     # for FFT analysis
     time_sub = time - time[0]
     n = len(time_sub)
     samp_fre = (n-1) / (time_sub[n-1] - time_sub[0])
-    print(samp_fre)
+    #print(samp_fre)
     k = np.arange(n)
     T = n / samp_fre
     frq = k / T # two sides frequency range
@@ -152,6 +123,25 @@ def fft_a(time,samp_sub):
     Y = np.fft.fft(samp_sub)/n # fft computing and normalization
     Y = Y[range(n/2)]
     return np.vstack((frq,Y))
+
+def band_smoother(time,samp_sub, band):
+    time_sub = time - time[0]
+    n = len(time_sub)
+    samp_fre = (n-1) / (time_sub[n-1] - time_sub[0])
+    k = np.arange(n)
+    T = n / samp_fre
+    frq = k / T # two sides frequency range
+    Y = np.fft.fft(samp_sub) # fft computing and normalization
+    start_band = band[0]
+    end_band   = band[1]
+    index = np.where(((frq <= end_band)&(frq >= start_band))|((frq <= (samp_fre-start_band))&(frq >= (samp_fre-end_band))))
+    spectrum = np.zeros(n);
+    spectrum[index] = Y[index]
+
+    data_filt = np.fft.ifft(spectrum)
+    #print(data_filt.shape)
+    return np.vstack((time, np.real(data_filt)))
+
 def height_test():
     fig = plt.figure(1, figsize=(8, 5))
     font2 = {'family' : 'Times New Roman',
@@ -225,27 +215,6 @@ def notch_test(ulog_file_name):
     fig_name = str(15)
     plt.savefig(fig_name)
     plt.show()
-    
-'''
-    plt.figure(2, figsize=(9, 7))
-    plt.subplot(2,1,1)
-    plt.plot(with_notch[0,:], sf)
-    #plt.xlim((150,160))
-    plt.xticks(fontsize=12)
-    plt.yticks(fontsize=12)
-    plt.ylabel('With Notch and Low-Pass',font2)
-
-    plt.subplot(2,1,2)
-    plt.plot(without_notch[0,:], without_notch[1,:])
-    #plt.xlim((70,80))
-    plt.xticks(fontsize=12)
-    plt.yticks(fontsize=12)
-    plt.xlabel('Time(s)',font2)
-    plt.ylabel('Without Notch and Low-Pass',font2)
-
-    fig_name = 'notch_test_time.jpg'
-    plt.savefig(fig_name)
-    '''
 
 def vib_14hz_test(ulog_file_name):
     plt.figure(1, figsize=(9, 7))
@@ -437,45 +406,253 @@ def sweep(ulog_file_name, output, time_start, time_end):
     
     plt.show()
 
-def compare_pr():
-    time = [73.5, 79.5]
-    plt.figure(1, figsize=(9, 6))
+def sideslip_calculate():
+    time1 = [294.8,  439] #without yaw control
+    time2 = [736, 890]
+    plt.figure(1, figsize=(18, 9))
     font2 = {'family' : 'Times New Roman',
     'weight' : 'normal',
     'size'   : 12,
     }
 
-    ulog_file_name = 'after_lpsp.ulg'
-    '''
-    plt.subplot(2,1,1)
-    atti_data = read_data(ulog_file_name,'vehicle_attitude_setpoint','q_d',time[0],time[1])
-    plt.plot(atti_data[0,:], atti_data[2,:], label = 'PitchSP')
-    atti_data = read_data(ulog_file_name,'vehicle_attitude','q',time[0],time[1])
-    plt.plot(atti_data[0,:], atti_data[2,:], label = 'Pitch')
-    plt.xticks(fontsize=12)
-    plt.yticks(fontsize=12)
-    plt.ylabel('Pitch(degree)',font2)
-    plt.legend(prop=font2,loc= 'lower right')
-    '''
+    PX4 = PX4ULog()
 
-    #plt.subplot(2,1,2)
-    with_notch = read_data(ulog_file_name,'vehicle_attitude','pitchspeed',time[0],time[1])
-    b,a = signal.butter(1,2.0*90/250.0,'low')
-    sf = signal.filtfilt(b,a,with_notch[1,:])*57*0.94
-    plt.plot(with_notch[0,:], sf, label = 'Feedback')
-    cmd = read_data(ulog_file_name,'vehicle_rates_setpoint','pitch',time[0],time[1])
-    plt.plot(cmd[0,:], cmd[1,:]*57, label = 'Command')
-    plt.xlim((time[0],time[1]))
-    plt.ylim((-220,260))
-    plt.xticks(fontsize=12)
-    plt.yticks(fontsize=12)
-    plt.xlabel('Time(s)',font2)
-    plt.ylabel('Pitch Angular Velocity(degree/s)',font2)
-    plt.legend(prop=font2,loc= 'upper right')
+    plt.subplot(2,2,1)
+    vx = PX4.read_data('without_yaw.ulg','vehicle_local_position',0,'vx',time1[0],time1[1])
+    vy = PX4.read_data('without_yaw.ulg','vehicle_local_position',0,'vy',time1[0],time1[1])
 
-    fig_name = 'compare_pr.jpg'
+    vel_ang = np.arctan2(vy[1,:], vx[1,:])/3.1415*180;
+    yaw = PX4.read_data('without_yaw.ulg','vehicle_attitude', 0, 'q', time1[0],time1[1])
+    yaw_resample = np.interp(vx[0,:], yaw[0,:], yaw[3,:])
+    sideslip_ang = vel_ang - yaw_resample
+    index = np.where((sideslip_ang <= -180) | (sideslip_ang >= 180))
+    sideslip_ang[index] = 0.0
+
+    #plt.plot(vx[0,:], vel_ang, linestyle='-', label = 'vel_ang')
+    plt.plot(yaw[0,:], yaw[1,:], linestyle='-', label = 'roll_ang')
+    plt.plot(vx[0,:], sideslip_ang, linestyle='-', label = 'sideslip_ang')
+    plt.legend()
+    plt.title('yawrate setpoint set to 0')
+    plt.grid()
+
+    plt.subplot(2,2,3)
+    yawspeed_i_sp = PX4.read_data('without_yaw.ulg','rate_ctrl_status',0,'yawspeed_i_sp',time1[0],time1[1])
+    yawspeed_i = PX4.read_data('without_yaw.ulg','rate_ctrl_status',0,'yawspeed_i',time1[0],time1[1])
+    plt.plot(yawspeed_i_sp[0,:], yawspeed_i_sp[1,:] * 57.3, linestyle='-', label = 'yawrate_setpoint')
+    plt.plot(yawspeed_i[0,:], yawspeed_i[1,:] * 57.3, linestyle='-', label = 'yawrate_feedback')
+    plt.legend()
+    plt.title('yawrate setpoint set to 0')
+    plt.grid()
+    
+    plt.subplot(2,2,2)
+    vx = PX4.read_data('with_yaw.ulg','vehicle_local_position',0,'vx',time2[0],time2[1])
+    vy = PX4.read_data('with_yaw.ulg','vehicle_local_position',0,'vy',time2[0],time2[1])
+
+    vel_ang = np.arctan2(vy[1,:], vx[1,:])/3.1415*180;
+    yaw = PX4.read_data('with_yaw.ulg','vehicle_attitude', 0, 'q', time2[0],time2[1])
+    yaw_resample = np.interp(vx[0,:], yaw[0,:], yaw[3,:])
+    sideslip_ang = vel_ang - yaw_resample
+    index = np.where((sideslip_ang <= -160) | (sideslip_ang >= 160))
+    sideslip_ang[index] = 0.0
+
+    #plt.plot(vx[0,:], vel_ang, linestyle='-', label = 'vel_ang')
+    plt.plot(yaw[0,:], yaw[1,:], linestyle='-', label = 'roll_ang')
+    plt.plot(vx[0,:], sideslip_ang, linestyle='-', label = 'sideslip_ang')
+    plt.legend()
+    plt.title('using Jacobian matrix')
+    plt.grid()
+
+    plt.subplot(2,2,4)
+    yawspeed_i_sp = PX4.read_data('with_yaw.ulg','rate_ctrl_status',0,'yawspeed_i_sp',time2[0],time2[1]) * 57.3
+    yawspeed_i = PX4.read_data('with_yaw.ulg','rate_ctrl_status',0,'yawspeed_i',time2[0],time2[1]) * 57.3
+    plt.plot(yawspeed_i_sp[0,:], yawspeed_i_sp[1,:] * 57.3, linestyle='-', label = 'yawrate_setpoint')
+    plt.plot(yawspeed_i[0,:], yawspeed_i[1,:] * 57.3, linestyle='-', label = 'yawrate_feedback')
+    plt.legend()
+    plt.title('using Jacobian matrix')
+    plt.grid()
+
+    fig_name = 'sideslip_compare.pdf'
     plt.savefig(fig_name, dpi=600)
-    plt.show()    
+    
+    plt.show()
+
+def euler_rate_compare():
+    time1 = [294.8,  439] #without yaw control
+    time2 = [736, 890]
+    plt.figure(1, figsize=(18, 9))
+    plt.title('using Jacobian matrix')
+    font2 = {'family' : 'Times New Roman',
+    'weight' : 'normal',
+    'size'   : 12,
+    }
+
+    PX4 = PX4ULog()
+    
+    ulog_name = 'with_yaw.ulg'
+    time = [50,  75]
+    rollspeed_i_sp = PX4.read_data(ulog_name,'rate_ctrl_status',0,'rollspeed_i_sp',time[0],time[1])
+    rollspeed_i = PX4.read_data(ulog_name,'rate_ctrl_status',0,'rollspeed_i',time[0],time[1])
+    pitchspeed_i_sp = PX4.read_data(ulog_name,'rate_ctrl_status',0,'pitchspeed_i_sp',time[0],time[1])
+    pitchspeed_i = PX4.read_data(ulog_name,'rate_ctrl_status',0,'pitchspeed_i',time[0],time[1])
+    yawspeed_i_sp = PX4.read_data(ulog_name,'rate_ctrl_status',0,'yawspeed_i_sp',time[0],time[1])
+    yawspeed_i = PX4.read_data(ulog_name,'rate_ctrl_status',0,'yawspeed_i',time[0],time[1])
+
+    plt.subplot(3,2,1)
+    plt.plot(rollspeed_i_sp[0,:], rollspeed_i_sp[1,:] * 57.3, linestyle='-', label = 'rollrate_setpoint')
+    plt.plot(rollspeed_i[0,:], rollspeed_i[1,:] * 57.3, linestyle='-', label = 'rollrate_feedback')
+    plt.legend()
+    #plt.title('yawrate setpoint set to 0')
+    plt.grid()
+
+    plt.subplot(3,2,3)
+    plt.plot(pitchspeed_i_sp[0,:], pitchspeed_i_sp[1,:] * 57.3, linestyle='-', label = 'pitchrate_setpoint')
+    plt.plot(pitchspeed_i[0,:], pitchspeed_i[1,:] * 57.3, linestyle='-', label = 'pitchrate_feedback')
+    plt.legend()
+    #plt.title('yawrate setpoint set to 0')
+    plt.grid()
+
+    plt.subplot(3,2,5)
+    plt.plot(yawspeed_i_sp[0,:], yawspeed_i_sp[1,:] * 57.3, linestyle='-', label = 'yawrate_setpoint')
+    plt.plot(yawspeed_i[0,:], yawspeed_i[1,:] * 57.3, linestyle='-', label = 'yawrate_feedback')
+    plt.legend()
+    #plt.title('yawrate setpoint set to 0')
+    plt.grid()
+    
+
+    ulog_name = 'with_yaw.ulg'
+    time = [50,  75]
+    rollspeed_i_sp = PX4.read_data(ulog_name,'rate_ctrl_status',0,'rollspeed_b_sp',time[0],time[1])
+    rollspeed_i = PX4.read_data(ulog_name,'rate_ctrl_status',0,'rollspeed',time[0],time[1])
+    pitchspeed_i_sp = PX4.read_data(ulog_name,'rate_ctrl_status',0,'pitchspeed_b_sp',time[0],time[1])
+    pitchspeed_i = PX4.read_data(ulog_name,'rate_ctrl_status',0,'pitchspeed',time[0],time[1])
+    yawspeed_i_sp = PX4.read_data(ulog_name,'rate_ctrl_status',0,'yawspeed_b_sp',time[0],time[1])
+    yawspeed_i = PX4.read_data(ulog_name,'rate_ctrl_status',0,'yawspeed',time[0],time[1])
+    
+    plt.subplot(3,2,2)
+    plt.plot(rollspeed_i_sp[0,:], rollspeed_i_sp[1,:] * 57.3, linestyle='-', label = 'p_sp')
+    plt.plot(rollspeed_i[0,:], rollspeed_i[1,:] * 57.3, linestyle='-', label = 'p_feedback')
+    plt.legend()
+    #plt.title('using Jacobian matrix')
+    plt.grid()
+
+    plt.subplot(3,2,4)
+    plt.plot(pitchspeed_i_sp[0,:], pitchspeed_i_sp[1,:] * 57.3, linestyle='-', label = 'q_sp')
+    plt.plot(pitchspeed_i[0,:], pitchspeed_i[1,:] * 57.3, linestyle='-', label = 'q_feedback')
+    plt.legend()
+    plt.grid()
+
+    plt.subplot(3,2,6)
+    plt.plot(yawspeed_i_sp[0,:], yawspeed_i_sp[1,:] * 57.3, linestyle='-', label = 'r_sp')
+    plt.plot(yawspeed_i[0,:], yawspeed_i[1,:] * 57.3, linestyle='-', label = 'r_feedback')
+    plt.legend()
+    plt.grid()
+
+    fig_name = 'sideslip_compare.pdf'
+    plt.savefig(fig_name, dpi=600)
+    
+    plt.show()
+
+def angular_rate_analyz(ulog_file_name):
+    #time = [445.5, 465.5] #log_01
+    #time = [428.25, 446.25] #log_12
+    #time = [87.8, 105.8] #log_18
+    time = [43, 59] #log_27
+    filter_freq = [4.8, 5.2]
+    filter_2freq = [15, 17]
+    plt.figure(1, figsize=(18, 9))
+    font2 = {'family' : 'Times New Roman',
+    'weight' : 'normal',
+    'size'   : 12,
+    }
+
+    plt.subplot(3,2,1)
+    rr_fdb = read_data(ulog_file_name,'sensor_combined',0,'gyro_rad[0]',time[0],time[1])
+    Y  =fft_a(rr_fdb[0,:], rr_fdb[1,:])
+    plt.plot(Y[0,:], abs(Y[1,:]), color='r', linestyle='-', label = 'rollrate_fdb')
+    plt.legend()
+    plt.subplot(3,2,3)
+    pr_fdb = read_data(ulog_file_name,'sensor_combined',0,'gyro_rad[1]',time[0],time[1])
+    Y  =fft_a(pr_fdb[0,:], pr_fdb[1,:])
+    plt.plot(Y[0,:], abs(Y[1,:]), color='r', linestyle='-', label = 'pitchrate_fdb')
+    plt.legend()
+    plt.subplot(3,2,5)
+    yr_fdb = read_data(ulog_file_name,'sensor_combined',0,'gyro_rad[2]',time[0],time[1])
+    Y  =fft_a(yr_fdb[0,:], yr_fdb[1,:])
+    plt.plot(Y[0,:], abs(Y[1,:]), color='r', linestyle='-', label = 'yawrate_fdb')
+    plt.legend()
+
+    plt.subplot(3,2,2)
+    acc_bx_fdb = read_data(ulog_file_name,'sensor_accel',0, 'x',time[0], time[1])
+    Y  =fft_a(acc_bx_fdb[0,:], acc_bx_fdb[1,:])
+    plt.plot(Y[0,:], abs(Y[1,:]), color='r', linestyle='-', label = 'ax_fdb')
+    plt.legend()
+    plt.subplot(3,2,4)
+    acc_by_fdb = read_data(ulog_file_name,'sensor_accel',0, 'y',time[0],time[1])
+    acc_by_fdb -= np.mean(acc_by_fdb[1,:])
+    Y  =fft_a(acc_by_fdb[0,:], acc_by_fdb[1,:])
+    plt.plot(Y[0,:], abs(Y[1,:]), color='r', linestyle='-', label = 'ay_fdb')
+    plt.legend()
+    plt.subplot(3,2,6)
+    acc_bz_fdb = read_data(ulog_file_name,'sensor_accel',0, 'z',time[0],time[1]) + 9.8
+    Y  =fft_a(acc_bz_fdb[0,:], acc_bz_fdb[1,:])
+    plt.plot(Y[0,:], abs(Y[1,:]), color='r', linestyle='-', label = 'az_fdb')
+    plt.legend()
+
+    fig_name = ulog_file_name[0:6] + '-' + 'spectrum.jpg'
+    plt.savefig(fig_name, dpi=600)
+
+    plt.figure(2, figsize=(18, 9))
+    font2 = {'family' : 'Times New Roman',
+    'weight' : 'normal',
+    'size'   : 12,
+    }
+    plt.subplot(3,2,1)
+    rr_fdb_filt = band_smoother(rr_fdb[0,:], rr_fdb[1,:], filter_freq)
+    plt.plot(rr_fdb_filt[0,:], rr_fdb_filt[1,:], color='r', linestyle='-', label = 'rollrate_filtered_w')
+    plt.legend()
+    plt.subplot(3,2,3)
+    pr_fdb_filt = band_smoother(pr_fdb[0,:], pr_fdb[1,:], filter_freq)
+    plt.plot(pr_fdb_filt[0,:], pr_fdb_filt[1,:], color='r', linestyle='-', label = 'pitchrate_filtered_w')
+    plt.legend()
+    plt.subplot(3,2,5)
+    yr_fdb_filt = band_smoother(yr_fdb[0,:], yr_fdb[1,:], filter_freq)
+    plt.plot(yr_fdb_filt[0,:], yr_fdb_filt[1,:], color='r', linestyle='-', label = 'yawrate_filtered_w')
+    plt.legend()
+
+    plt.subplot(3,2,2)
+    acc_bx_filt = band_smoother(acc_bx_fdb[0,:], acc_bx_fdb[1,:], filter_freq)
+    plt.plot(acc_bx_filt[0,:], acc_bx_filt[1,:], color='r', linestyle='-', label = 'acc_bx_filtered_2w')
+    plt.legend()
+    plt.subplot(3,2,4)
+    acc_by_filt = band_smoother(acc_by_fdb[0,:], acc_by_fdb[1,:], filter_freq)
+    plt.plot(acc_by_filt[0,:], acc_by_filt[1,:], color='r', linestyle='-', label = 'acc_by_filtered_2w')
+    plt.legend()
+    plt.subplot(3,2,6)
+    acc_bz_filt = band_smoother(acc_bz_fdb[0,:], acc_bz_fdb[1,:], filter_freq)
+    plt.plot(acc_bz_filt[0,:], acc_bz_filt[1,:], color='r', linestyle='-', label = 'acc_bz_filtered_2w')
+    plt.legend()
+
+    fig_name = ulog_file_name[0:6] + '-' + 'filtered data.jpg'
+    plt.savefig(fig_name, dpi=600)
+
+    plt.figure(3, figsize=(18, 9))
+    font2 = {'family' : 'Times New Roman',
+    'weight' : 'normal',
+    'size'   : 12,
+    }
+
+    plt.subplot(2,1,1)
+    angular_rate_sqr=np.power(pr_fdb_filt[1,:],1)# + np.power(pr_fdb_filt[1,:], 2)
+    plt.plot(rr_fdb_filt[0,:], angular_rate_sqr, color='r', linestyle='-', label = 'angular_rate_sqr')
+    plt.legend()
+    plt.subplot(2,1,2)
+    plt.plot(acc_bx_filt[0,:], acc_bx_filt[1,:], color='r', linestyle='-', label = 'acc_bz_filtered_2w')
+    plt.legend()
+
+    fig_name = ulog_file_name[0:6] + '-' + 'compare the w^2 with az.jpg'
+    plt.savefig(fig_name, dpi=600)
+
+    plt.show()
 
 def acc_filter(ulog_file_name):
     plt.figure(1, figsize=(18, 7))

@@ -63,6 +63,8 @@ setup(
             'ulog2kml=pyulog.ulog2kml:main',
 	        'icuas_2019=pyulog.icuas_2019:main',
             'ILC=pyulog.ILC:main',
+            'FreqAnal=pyulog.FrequencyAnalysis:main',
+            'ICRA_2020=pyulog.ICRA_2020:main'
         ],
     },
     packages=find_packages(),

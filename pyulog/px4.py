@@ -3,20 +3,89 @@ PX4-specific ULog helper
 """
 from __future__ import print_function
 import numpy as np
+from .core import ULog
 
 __author__ = "Beat Kueng"
 
 
-class PX4ULog(object):
+class PX4ULog():
     """
     This class contains PX4-specific ULog things (field names, etc.)
     """
 
-    def __init__(self, ulog_object):
-        """
-        @param ulog_object: ULog instance
-        """
-        self._ulog = ulog_object
+    #def __init__(self = None):
+        #self._ulog = ulog_object
+
+    def read_data(self,ulog_file_name,massage,ind,channal,time_start,time_end):
+        ulog = ULog(ulog_file_name, massage)
+        d    = ulog.data_list
+        
+        if ((channal == 'q_d')|(massage == 'rate_ctrl_status')):#(channal == 'yawspeed_i')|(channal == 'yawspeed_i_sp')): #| (massage == 'sensor_accel')):
+            ind_channel = 1
+        else:
+            ind_channel = ind
+        print(d[0].name)
+
+        times = d[ind_channel].data['timestamp'] / 1000000.0 #second
+        index = np.where((times>=time_start)&(times<=time_end))
+        time_sub = times[index]
+        print(time_sub.shape)
+        q = np.zeros(shape=(len(time_sub),4))
+
+        if ((channal == 'q') or (channal == 'q_d')):
+            for i in range(0,4):
+                data_name = channal + '['+str(i)+']'
+                ori_data = d[ind_channel].data[data_name]
+                #print(ori_data)
+                q[:,i] = ori_data[index]
+            #r = Rotation.from_quat(np.array([q[:,0], q[:,1], q[:,2], q[:,3]]).T)
+            #euler_ang = r.as_euler('zxy', degrees=True)
+            #print(euler_ang[0,1])
+
+            roll  = np.arcsin(2.0 * (q[:,0] * q[:,1] + q[:,2] * q[:,3]))*57.3
+            pitch = np.arctan2(-2.0 * (q[:,1] * q[:,3] - q[:,0] * q[:,2]), 1.0 - 2.0 * (q[:,1] * q[:,1] + q[:,2] * q[:,2]))*57.3
+            yaw   = np.arctan2(-2.0 * (q[:,1] * q[:,2] - q[:,0] * q[:,3]), 1.0 - 2.0 * (q[:,1] * q[:,1] + q[:,3] * q[:,3]))*57.3
+            dat   = np.vstack((time_sub,roll,pitch,yaw))
+            
+        else:
+            data_name = channal
+            pitchsp = d[ind_channel].data[data_name] #degree
+            pitchsp_sub = pitchsp[index]
+            dat = np.vstack((time_sub,pitchsp_sub))
+        return dat
+
+    def fft_a(self,time,samp_sub):
+        # for FFT analysis
+        time_sub = time - time[0]
+        n = len(time_sub)
+        samp_fre = (n-1) / (time_sub[n-1] - time_sub[0])
+        #print(samp_fre)
+        k = np.arange(n)
+        T = n / samp_fre
+        frq = k / T # two sides frequency range
+        frq = frq[range(n/2)] # one side frequency range
+
+        Y = np.fft.fft(samp_sub)/n # fft computing and normalization
+        Y = Y[range(n/2)]
+        return np.vstack((frq,Y))
+
+    def band_smoother(self,time,samp_sub, band):
+        time_sub = time - time[0]
+        n = len(time_sub)
+        samp_fre = (n-1) / (time_sub[n-1] - time_sub[0])
+        k = np.arange(n)
+        T = n / samp_fre
+        frq = k / T # two sides frequency range
+        Y = np.fft.fft(samp_sub) # fft computing and normalization
+        start_band = band[0]
+        end_band   = band[1]
+        index = np.where(((frq <= end_band)&(frq >= start_band))|((frq <= (samp_fre-start_band))&(frq >= (samp_fre-end_band))))
+        spectrum = np.zeros(n);
+        spectrum[index] = Y[index]
+
+        data_filt = np.fft.ifft(spectrum)
+        #print(data_filt.shape)
+        return np.vstack((time, np.real(data_filt)))
 
     def get_mav_type(self):
         """ return the MAV type as string from initial parameters """
