@@ -30,7 +30,7 @@ def angular_rate_analyz(ulog_file_name):
     #time = [445.5, 465.5] #log_01
     #time = [428.25, 446.25] #log_12
     #time = [87.8, 105.8] #log_18
-    time = [140, 210] #log_27
+    time = [75, 113] #log_27
     filter_freq = [4.8, 5.2]
     filter_2freq = [15, 17]
     plt.figure(1, figsize=(18, 9))
@@ -42,6 +42,7 @@ def angular_rate_analyz(ulog_file_name):
     PX4 = PX4ULog()
 
     rr_fdb = PX4.read_data(ulog_file_name,'sensor_combined',0,'gyro_rad[0]',time[0],time[1])
+    rr_fdb[0,0]
     Y_rr_fdb =PX4.fft_a(rr_fdb[0,:], rr_fdb[1,:] * 57.3)
     pr_fdb = PX4.read_data(ulog_file_name,'sensor_combined',0,'gyro_rad[1]',time[0],time[1])
     Y_pr_fdb =PX4.fft_a(pr_fdb[0,:], pr_fdb[1,:] * 57.3)
@@ -56,7 +57,8 @@ def angular_rate_analyz(ulog_file_name):
     Y_yr_sp =PX4.fft_a(yr_sp[0,:], yr_sp[1,:] * 57.3)
 
     plt.subplot(3,2,1)
-    plt.plot(Y_rr_fdb[0,:], abs(Y_rr_fdb[1,:]), color='r', linestyle='-', label = 'rollrate_fdb')
+    plt.plot(rr_fdb[0,:], abs(rr_fdb[1,:]), color='r', linestyle='-', label = 'rollrate_fdb')
+    plt.plot(rr_sp[0,:], abs(rr_sp[1,:]), color='b', linestyle='-', label = 'rollrate_sp')
     plt.legend()
     plt.subplot(3,2,3)
     plt.plot(Y_pr_fdb[0,:], abs(Y_pr_fdb[1,:]), color='r', linestyle='-', label = 'pitchrate_fdb')
@@ -75,7 +77,7 @@ def angular_rate_analyz(ulog_file_name):
     plt.legend()
 
     fig_name = ulog_file_name[0:6] + '-' + 'spectrum.jpg'
-    plt.savefig(fig_name, dpi=600)
+    #plt.savefig(fig_name, dpi=600)
     plt.show()
 
 def accel_analysis(ulog_file_name):

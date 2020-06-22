@@ -63,10 +63,11 @@ class PX4ULog():
         k = np.arange(n)
         T = n / samp_fre
         frq = k / T # two sides frequency range
-        frq = frq[range(n/2)] # one side frequency range
+        print(n//2)
+        frq = frq[range(n//2)] # one side frequency range
 
         Y = np.fft.fft(samp_sub)/n # fft computing and normalization
-        Y = Y[range(n/2)]
+        Y = Y[range(n//2)]
         return np.vstack((frq,Y))
 
     def band_smoother(self,time,samp_sub, band):
